@@ -39,6 +39,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN groupadd -g 1000 appgroup && \
     useradd -u 1000 -g appgroup -s /bin/bash -m appuser
 
+# Create upload, storage, and data directories as root and assign ownership before switching to USER
+RUN mkdir -p /app/uploads /app/data /app/wwwroot/uploads && \
+    chown -R appuser:appgroup /app/uploads /app/data /app/wwwroot/uploads
+
 COPY --from=builder /build/deps /app/deps
 COPY --chown=appuser:appgroup alembic.ini /app/
 COPY --chown=appuser:appgroup alembic /app/alembic

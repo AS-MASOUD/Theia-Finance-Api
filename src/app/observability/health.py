@@ -13,6 +13,8 @@ from src.app.database.session import get_db_session
 health_router = APIRouter(prefix="/health", tags=["Health & Observability"])
 
 
+@health_router.get("", status_code=status.HTTP_200_OK)
+@health_router.get("/", status_code=status.HTTP_200_OK)
 @health_router.get("/live", status_code=status.HTTP_200_OK)
 async def liveness_check() -> dict[str, str]:
     """Basic liveness probe checking if HTTP server process is running."""
