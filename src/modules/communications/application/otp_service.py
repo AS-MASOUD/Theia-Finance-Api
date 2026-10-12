@@ -1,5 +1,6 @@
 import random
 import re
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import desc, select
@@ -10,6 +11,7 @@ from src.app.core.security import hash_password, verify_password
 from src.app.core.settings import get_settings
 from src.app.database.models import OTPRequestModel
 from src.app.observability.logging import get_logger
+from src.modules.communications.infrastructure.bale.factory import get_bale_provider
 from src.modules.communications.infrastructure.email.factory import get_email_provider
 from src.modules.communications.infrastructure.sms.factory import get_sms_provider
 
@@ -53,6 +55,7 @@ def normalize_identifier(identifier: str) -> tuple[str, str]:
 
 class OTPService:
     def __init__(self):
+        self.bale_provider = get_bale_provider()
         self.sms_provider = get_sms_provider()
         self.email_provider = get_email_provider()
 
@@ -61,9 +64,17 @@ class OTPService:
         db: AsyncSession,
         identifier: str,
         purpose: str = "login",
+        preferred_channel: str | None = None,
     ) -> dict[str, str | int | None]:
         clean_id, channel = normalize_identifier(identifier)
         now = datetime.now(UTC)
+
+        if not settings.ENABLE_OTP:
+            raise AppException(
+                "سرویس کد یکبار مصرف (OTP) موقتاً غیرفعال است. لطفاً با استفاده از رمز عبور وارد شوید یا ثبت‌نام فرمایید.",
+                code="OTP_DISABLED",
+                status_code=400,
+            )
 
         # Check rate-limit / cooldown
         stmt_last = (
@@ -98,25 +109,54 @@ class OTPService:
 
         expires_at = now + timedelta(seconds=settings.OTP_EXPIRE_SECONDS)
 
-        otp_record = OTPRequestModel(
-            identifier=clean_id,
-            channel=channel,
-            otp_code_hash=code_hash,
-            purpose=purpose,
-            attempts=0,
-            is_used=False,
-            expires_at=expires_at,
-            created_at=now,
-        )
-        db.add(otp_record)
-        await db.flush()
-
-        logger.info("[OTP-SERVICE] Generated OTP code for %s [%s] (expires in %ds, code redacted)", clean_id, channel, settings.OTP_EXPIRE_SECONDS)
-
-        # Dispatch via SMS or Email
+        # Dispatch via Bale Messenger, SMS, or Email
+        actual_channel = channel
         if channel == "sms":
-            await self.sms_provider.send_otp_pattern(clean_id, code_str)
+            strategy = settings.OTP_DELIVERY_STRATEGY.lower().strip()
+            pref = (preferred_channel or "").lower().strip()
+
+            should_attempt_bale = pref == "bale" or (
+                pref not in ("sms", "email") and strategy in ("bale_first", "bale_only")
+            )
+
+            if should_attempt_bale:
+                bale_req_id = uuid.uuid4().hex
+                bale_result = await self.bale_provider.send_otp(clean_id, code_str, request_id=bale_req_id)
+                if bale_result.success:
+                    actual_channel = "bale"
+                    logger.info(
+                        "[OTP-SERVICE] Dispatched OTP via Bale Safir to %s (message_id=%s)",
+                        clean_id,
+                        bale_result.message_id,
+                    )
+                elif strategy == "bale_only" or pref == "bale_only":
+                    if bale_result.is_not_bale_user:
+                        raise AppException(
+                            "این شماره موبایل در پیام‌رسان بله ثبت‌نام نکرده است.",
+                            code="BALE_NOT_USER",
+                            status_code=400,
+                        )
+                    raise AppException(
+                        f"خطا در ارسال پیام بله: {bale_result.error_description}",
+                        code="BALE_SEND_FAILED",
+                        status_code=502,
+                    )
+                else:
+                    # Strategy is bale_first: Fallback to Iranian SMS gateway
+                    logger.warning(
+                        "[OTP-SERVICE] Bale delivery not available for %s (code=%s: %s). Falling back to SMS gateway...",
+                        clean_id,
+                        bale_result.error_code,
+                        bale_result.error_description,
+                    )
+                    await self.sms_provider.send_otp_pattern(clean_id, code_str)
+                    actual_channel = "sms"
+            else:
+                # Direct SMS delivery
+                await self.sms_provider.send_otp_pattern(clean_id, code_str)
+                actual_channel = "sms"
         else:
+            actual_channel = "email"
             subject = "کد تایید سامانه فرماندهی مالی"
             html_body = f"""
             <div dir="rtl" style="font-family: Tahoma, sans-serif; padding: 20px; color: #1e293b;">
@@ -130,9 +170,29 @@ class OTPService:
             """
             await self.email_provider.send_email(clean_id, subject, html_body)
 
+        otp_record = OTPRequestModel(
+            identifier=clean_id,
+            channel=actual_channel,
+            otp_code_hash=code_hash,
+            purpose=purpose,
+            attempts=0,
+            is_used=False,
+            expires_at=expires_at,
+            created_at=now,
+        )
+        db.add(otp_record)
+        await db.flush()
+
+        logger.info(
+            "[OTP-SERVICE] Generated OTP code for %s [%s] (expires in %ds, code redacted)",
+            clean_id,
+            actual_channel,
+            settings.OTP_EXPIRE_SECONDS,
+        )
+
         return {
             "identifier": clean_id,
-            "channel": channel,
+            "channel": actual_channel,
             "expires_in": settings.OTP_EXPIRE_SECONDS,
             "cooldown_seconds": settings.OTP_COOLDOWN_SECONDS,
         }

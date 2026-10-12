@@ -70,13 +70,20 @@ class AuthService:
             db=db,
             identifier=clean_phone,
             purpose="register",
+            preferred_channel=request.channel,
+        )
+        channel_name = str(data["channel"])
+        msg = (
+            "کد یکبار مصرف با موفقیت از طریق پیام‌رسان بله ارسال شد."
+            if channel_name == "bale"
+            else "کد یکبار مصرف با موفقیت به شماره موبایل شما ارسال شد."
         )
         return OTPResponse(
             identifier=str(data["identifier"]),
-            channel=str(data["channel"]),
+            channel=channel_name,
             expires_in=int(data["expires_in"] or 180),
             cooldown_seconds=int(data["cooldown_seconds"] or 120),
-            message="کد یکبار مصرف با موفقیت به شماره موبایل شما ارسال شد.",
+            message=msg,
         )
 
     async def register_with_otp(
@@ -169,13 +176,8 @@ class AuthService:
         )
 
     async def register(self, db: AsyncSession, request: UserRegisterRequest) -> TokenResponse:
-        # Mandatory OTP verification
-        if not request.code:
-            raise AppException(
-                "کد یکبار مصرف جهت اعتبارسنجی ثبت‌نام الزامی است.",
-                code="OTP_REQUIRED",
-                status_code=400,
-            )
+        if not request.password:
+            raise AppException("رمز عبور جهت ثبت‌نام الزامی است.", code="PASSWORD_REQUIRED", status_code=400)
 
         clean_phone = request.phone_number
         if clean_phone:
@@ -185,15 +187,92 @@ class AuthService:
         if not clean_phone and not clean_email:
             raise AppException("لطفاً شماره موبایل یا ایمیل را وارد نمایید.", code="MISSING_CONTACT", status_code=400)
 
-        return await self.register_with_otp(
-            db=db,
-            request=RegisterVerifyOTPRequest(
-                full_name=request.full_name,
-                phone_number=clean_phone or clean_email or "",
-                email=clean_email,
-                password=request.password,
-                code=request.code,
-            ),
+        # If OTP code is provided, verify OTP (for backward compatibility when OTP is enabled)
+        if request.code:
+            return await self.register_with_otp(
+                db=db,
+                request=RegisterVerifyOTPRequest(
+                    full_name=request.full_name,
+                    phone_number=clean_phone or clean_email or "",
+                    email=clean_email,
+                    password=request.password,
+                    code=request.code,
+                ),
+            )
+
+        # Direct static password registration (when OTP is temporarily disabled)
+        conditions = []
+        if clean_phone:
+            conditions.append(UserModel.phone_number == clean_phone)
+        if clean_email:
+            conditions.append(UserModel.email == clean_email)
+
+        if conditions:
+            stmt_exist = select(UserModel).where(or_(*conditions))
+            res_exist = await db.execute(stmt_exist)
+            if res_exist.scalar_one_or_none() is not None:
+                raise EntityConflictException("کاربری با این مشخصات قبلاً در سامانه ثبت شده است. لطفاً وارد شوید.")
+
+        stmt_count = select(func.count(UserModel.id))
+        user_count = (await db.execute(stmt_count)).scalar() or 0
+        role = SystemRole.SYSMANAGER.value if user_count == 0 else SystemRole.USER.value
+
+        hashed = hash_password(request.password)
+        now = datetime.now(UTC)
+
+        user = UserModel(
+            email=clean_email,
+            phone_number=clean_phone,
+            hashed_password=hashed,
+            full_name=request.full_name,
+            role=role,
+            is_active=True,
+            is_verified=True,
+            failed_login_attempts=0,
+            lockout_until=None,
+            last_login_at=now,
+            monthly_income=Decimal("0.0000"),
+            liquid_assets=Decimal("0.0000"),
+            investment_assets=Decimal("0.0000"),
+            total_liabilities=Decimal("0.0000"),
+            financial_goals=[],
+            has_completed_financial_onboarding=False,
+            risk_score=0,
+            risk_level=None,
+            risk_answers=None,
+            portfolio_suggestion=None,
+            has_completed_risk_onboarding=False,
+        )
+        db.add(user)
+        await db.flush()
+
+        audit = AuditEntryModel(
+            action="USER_REGISTER_PASSWORD",
+            entity_type="USER",
+            entity_id=str(user.id),
+            details={
+                "email": user.email,
+                "phone_number": user.phone_number,
+                "role": user.role,
+                "is_first_user": user_count == 0,
+            },
+        )
+        db.add(audit)
+        await db.flush()
+
+        token_data = {
+            "sub": str(user.id),
+            "email": user.email or "",
+            "phone_number": user.phone_number or "",
+            "role": user.role,
+        }
+        access_token = create_access_token(token_data)
+
+        return TokenResponse(
+            access_token=access_token,
+            token_type="bearer",
+            expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            user=UserResponse.model_validate(user),
         )
 
     async def login_with_password(
@@ -329,13 +408,20 @@ class AuthService:
             db=db,
             identifier=request.identifier,
             purpose="login",
+            preferred_channel=request.channel,
+        )
+        channel_name = str(data["channel"])
+        msg = (
+            "کد یکبار مصرف با موفقیت از طریق پیام‌رسان بله ارسال شد."
+            if channel_name == "bale"
+            else "کد یکبار مصرف با موفقیت ارسال شد."
         )
         return OTPResponse(
             identifier=str(data["identifier"]),
-            channel=str(data["channel"]),
+            channel=channel_name,
             expires_in=int(data["expires_in"] or 180),
             cooldown_seconds=int(data["cooldown_seconds"] or 120),
-            message="کد یکبار مصرف با موفقیت ارسال شد.",
+            message=msg,
         )
 
     async def login_with_otp(

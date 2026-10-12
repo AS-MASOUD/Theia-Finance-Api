@@ -379,7 +379,7 @@ async def test_auth_register_otp_flow():
         assert otp_res.status_code == 200
         otp_json = otp_res.json()
         assert otp_json["identifier"] == unique_phone
-        assert otp_json["channel"] == "sms"
+        assert otp_json["channel"] in ("bale", "sms")
         assert otp_json.get("debug_code") is None
         valid_code = get_sms_provider().sent_messages[-1]["code"]
 
@@ -459,6 +459,38 @@ async def test_account_lockout_after_five_failed_attempts():
             json={"identifier": unique_phone, "password": password},
         )
         assert locked_correct.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_register_with_static_password_directly():
+    """Verify that user can register directly with static password without requiring OTP."""
+    import uuid
+    unique_phone = f"0919{uuid.uuid4().int % 10000000:07d}"
+    password = "DirectPassword123!"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        # Register directly with static password (no code provided)
+        reg_res = await client.post(
+            "/api/v1/auth/register",
+            json={
+                "full_name": "کاربر ثبت‌نام مستقیم",
+                "phone_number": unique_phone,
+                "password": password,
+            },
+        )
+        assert reg_res.status_code == 201
+        data = reg_res.json()
+        assert data["user"]["phone_number"] == unique_phone
+        assert "access_token" in data
+
+        # Login immediately with static password
+        login_res = await client.post(
+            "/api/v1/auth/login",
+            json={"identifier": unique_phone, "password": password},
+        )
+        assert login_res.status_code == 200
+        assert login_res.json()["user"]["phone_number"] == unique_phone
+
 
 
 

@@ -14,8 +14,8 @@ class UserRegisterRequest(BaseModel):
     full_name: str = Field(..., min_length=2, max_length=50, description="Full name")
     email: str | None = Field(default=None, description="User email address")
     phone_number: str | None = Field(default=None, description="Iranian mobile number (e.g. 09123456789)")
-    password: str | None = Field(default=None, min_length=8, max_length=128, description="User password")
-    code: str = Field(..., min_length=4, max_length=8, description="Mandatory OTP verification code")
+    password: str = Field(..., min_length=8, max_length=128, description="User password")
+    code: str | None = Field(default=None, min_length=4, max_length=8, description="Optional OTP verification code")
 
     @field_validator("password")
     @classmethod
@@ -62,6 +62,7 @@ class RegisterRequestOTP(BaseModel):
     phone_number: str = Field(..., description="Iranian mobile number (e.g. 09123456789)")
     email: str | None = Field(default=None, description="User email address")
     password: str | None = Field(default=None, min_length=8, max_length=128, description="User password")
+    channel: str | None = Field(default=None, description="Preferred OTP channel: 'bale', 'sms', or None (auto)")
 
     @field_validator("password")
     @classmethod
@@ -149,6 +150,10 @@ class RequestOTPRequest(BaseModel):
     identifier: str = Field(
         ...,
         description="Mobile phone number (e.g. 09123456789) or email address to receive OTP code",
+    )
+    channel: str | None = Field(
+        default=None,
+        description="Preferred OTP delivery channel: 'bale', 'sms', 'email', or None (auto-negotiated)",
     )
 
 

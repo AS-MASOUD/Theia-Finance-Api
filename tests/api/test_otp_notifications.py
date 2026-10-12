@@ -36,15 +36,22 @@ async def test_password_login_with_phone_number_and_email():
 @pytest.mark.asyncio
 async def test_otp_flow_phone_and_email():
     import uuid
+    from sqlalchemy import delete
+    from src.app.database.models import OTPRequestModel
     from src.modules.communications.infrastructure.sms.factory import get_sms_provider
+    from tests.conftest import TestSessionFactory
+
+    async with TestSessionFactory() as db:
+        await db.execute(delete(OTPRequestModel).where(OTPRequestModel.identifier == "09122222222"))
+        await db.commit()
 
     sms_provider = get_sms_provider()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        # 1. Request OTP for existing phone number
+        # 1. Request OTP for existing phone number via SMS
         req_res = await client.post(
             "/api/v1/auth/otp/request",
-            json={"identifier": "09122222222"},
+            json={"identifier": "09122222222", "channel": "sms"},
         )
         assert req_res.status_code == 200
         otp_info = req_res.json()
@@ -60,7 +67,7 @@ async def test_otp_flow_phone_and_email():
         # 2. Cooldown check - immediate repeat should return 429
         repeat_res = await client.post(
             "/api/v1/auth/otp/request",
-            json={"identifier": "09122222222"},
+            json={"identifier": "09122222222", "channel": "sms"},
         )
         assert repeat_res.status_code == 429
 
@@ -97,6 +104,7 @@ async def test_otp_flow_phone_and_email():
                 "phone_number": new_phone,
                 "password": "ValidPassword123!",
                 "full_name": "کاربر جدید تلفنی",
+                "channel": "sms",
             },
         )
         assert reg_otp_req.status_code == 200
@@ -119,7 +127,7 @@ async def test_otp_flow_phone_and_email():
         # 8. Now OTP login request succeeds for the registered user
         otp_req_reg = await client.post(
             "/api/v1/auth/otp/request",
-            json={"identifier": new_phone},
+            json={"identifier": new_phone, "channel": "sms"},
         )
         assert otp_req_reg.status_code == 200
         new_login_code = sms_provider.sent_messages[-1]["code"]

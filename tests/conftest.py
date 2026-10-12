@@ -45,3 +45,11 @@ def override_db_dependency():
     app.dependency_overrides[get_db_session] = override_get_db_session
     yield
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def enable_otp_in_tests():
+    original = settings.ENABLE_OTP
+    settings.ENABLE_OTP = True
+    yield
+    settings.ENABLE_OTP = original

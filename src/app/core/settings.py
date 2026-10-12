@@ -70,6 +70,19 @@ class Settings(BaseSettings):
     SMTP_FROM_EMAIL: str = "no-reply@personal-fc.local"
     SMTP_USE_TLS: bool = True
 
+    # Bale Messenger Safir API (Iranian Messenger OTP Delivery)
+    BALE_PROVIDER: str = "mock"  # mock, safir
+    BALE_API_ACCESS_KEY: str = ""
+    BALE_BOT_ID: int = 0
+    BALE_BASE_URL: str = "https://safir.bale.ai/api/v3"
+
+    # OTP Delivery Strategy (dual delivery: Bale Safir + SMS Fallback)
+    # Options: bale_first (default), bale_only, sms_only
+    OTP_DELIVERY_STRATEGY: str = "bale_first"
+
+    # OTP Feature Toggle (Temporarily disabled: users register and login with static password)
+    ENABLE_OTP: bool = False
+
     OTP_EXPIRE_SECONDS: int = 180
     OTP_COOLDOWN_SECONDS: int = 120
     OTP_DIGITS: int = 5
@@ -98,6 +111,16 @@ class Settings(BaseSettings):
                     "Production configuration error: Default database credentials (admin:admin or postgres:postgres) "
                     "are prohibited in production. A secure DATABASE_URL must be configured."
                 )
+
+            if self.BALE_PROVIDER.lower() == "safir":
+                if not self.BALE_API_ACCESS_KEY:
+                    raise InvalidOperationException(
+                        "Production configuration error: BALE_API_ACCESS_KEY must be configured when BALE_PROVIDER is 'safir'."
+                    )
+                if self.BALE_BOT_ID <= 0:
+                    raise InvalidOperationException(
+                        "Production configuration error: BALE_BOT_ID must be a valid positive integer when BALE_PROVIDER is 'safir'."
+                    )
         return self
 
 
