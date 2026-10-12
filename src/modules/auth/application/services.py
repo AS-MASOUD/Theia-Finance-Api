@@ -5,6 +5,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.exceptions import (
+    AccountLockedException,
     AppException,
     AuthenticationException,
     EntityConflictException,
@@ -75,33 +76,35 @@ class AuthService:
             channel=str(data["channel"]),
             expires_in=int(data["expires_in"] or 180),
             cooldown_seconds=int(data["cooldown_seconds"] or 120),
-            debug_code=str(data["debug_code"]) if data.get("debug_code") else None,
             message="کد یکبار مصرف با موفقیت به شماره موبایل شما ارسال شد.",
         )
 
     async def register_with_otp(
         self, db: AsyncSession, request: RegisterVerifyOTPRequest
     ) -> TokenResponse:
-        clean_phone, _ = normalize_identifier(request.phone_number)
-        clean_email = request.email.strip().lower() if request.email else None
-
-        # Verify OTP first
-        await self.otp_service.verify_otp(
-            db=db,
-            identifier=clean_phone,
-            code=request.code,
-            purpose="register",
-        )
-
-        # Check conflict
-        conditions = [UserModel.phone_number == clean_phone]
+        clean_id, channel = normalize_identifier(request.phone_number)
+        clean_phone = clean_id if channel == "sms" else None
+        clean_email = request.email.strip().lower() if request.email else (clean_id if channel == "email" else None)
+        # Check conflict first before verifying OTP
+        conditions = []
+        if clean_phone:
+            conditions.append(UserModel.phone_number == clean_phone)
         if clean_email:
             conditions.append(UserModel.email == clean_email)
 
-        stmt_exist = select(UserModel).where(or_(*conditions))
-        res_exist = await db.execute(stmt_exist)
-        if res_exist.scalar_one_or_none() is not None:
-            raise EntityConflictException("کاربری با این مشخصات قبلاً در سامانه ثبت شده است.")
+        if conditions:
+            stmt_exist = select(UserModel).where(or_(*conditions))
+            res_exist = await db.execute(stmt_exist)
+            if res_exist.scalar_one_or_none() is not None:
+                raise EntityConflictException("کاربری با این مشخصات قبلاً در سامانه ثبت شده است.")
+
+        # Verify OTP
+        await self.otp_service.verify_otp(
+            db=db,
+            identifier=clean_id,
+            code=request.code,
+            purpose="register",
+        )
 
         stmt_count = select(func.count(UserModel.id))
         user_count = (await db.execute(stmt_count)).scalar() or 0
@@ -118,6 +121,8 @@ class AuthService:
             role=role,
             is_active=True,
             is_verified=True,
+            failed_login_attempts=0,
+            lockout_until=None,
             last_login_at=now,
             monthly_income=Decimal("0.0000"),
             liquid_assets=Decimal("0.0000"),
@@ -164,102 +169,31 @@ class AuthService:
         )
 
     async def register(self, db: AsyncSession, request: UserRegisterRequest) -> TokenResponse:
-        # If code is supplied, delegate to OTP registration
-        if request.code:
-            if not request.phone_number:
-                raise AppException("جهت ثبت‌نام با کد تایید، شماره موبایل الزامی است.", code="PHONE_REQUIRED", status_code=400)
-            return await self.register_with_otp(
-                db=db,
-                request=RegisterVerifyOTPRequest(
-                    full_name=request.full_name,
-                    phone_number=request.phone_number,
-                    email=request.email,
-                    password=request.password,
-                    code=request.code,
-                ),
+        # Mandatory OTP verification
+        if not request.code:
+            raise AppException(
+                "کد یکبار مصرف جهت اعتبارسنجی ثبت‌نام الزامی است.",
+                code="OTP_REQUIRED",
+                status_code=400,
             )
 
-        # Validate that at least email or phone_number is provided
-        if not request.email and not request.phone_number:
-            raise AppException("لطفاً حداقل ایمیل یا شماره موبایل را وارد نمایید.", code="MISSING_CONTACT", status_code=400)
-
-        # Check existing
-        clean_email = request.email.strip().lower() if request.email else None
-        clean_phone = None
-        if request.phone_number:
-            clean_phone, _ = normalize_identifier(request.phone_number)
-
-        conditions = []
-        if clean_email:
-            conditions.append(UserModel.email == clean_email)
+        clean_phone = request.phone_number
         if clean_phone:
-            conditions.append(UserModel.phone_number == clean_phone)
+            clean_phone, _ = normalize_identifier(clean_phone)
+        clean_email = request.email.strip().lower() if request.email else None
 
-        if conditions:
-            stmt_exist = select(UserModel).where(or_(*conditions))
-            res_exist = await db.execute(stmt_exist)
-            if res_exist.scalar_one_or_none() is not None:
-                raise EntityConflictException("کاربری با این ایمیل یا شماره موبایل در سامانه ثبت شده است.")
+        if not clean_phone and not clean_email:
+            raise AppException("لطفاً شماره موبایل یا ایمیل را وارد نمایید.", code="MISSING_CONTACT", status_code=400)
 
-        # Determine role: First user is sysmanager, subsequent users are user
-        stmt_count = select(func.count(UserModel.id))
-        user_count = (await db.execute(stmt_count)).scalar() or 0
-        role = SystemRole.SYSMANAGER.value if user_count == 0 else SystemRole.USER.value
-
-        hashed = hash_password(request.password) if request.password else None
-        now = datetime.now(UTC)
-
-        user = UserModel(
-            email=clean_email,
-            phone_number=clean_phone,
-            hashed_password=hashed,
-            full_name=request.full_name,
-            role=role,
-            is_active=True,
-            is_verified=True,
-            last_login_at=now,
-            monthly_income=Decimal("0.0000"),
-            liquid_assets=Decimal("0.0000"),
-            investment_assets=Decimal("0.0000"),
-            total_liabilities=Decimal("0.0000"),
-            financial_goals=[],
-            has_completed_financial_onboarding=False,
-            risk_score=0,
-            risk_level=None,
-            risk_answers=None,
-            portfolio_suggestion=None,
-            has_completed_risk_onboarding=False,
-        )
-        db.add(user)
-        await db.flush()
-
-        audit = AuditEntryModel(
-            action="USER_REGISTER",
-            entity_type="USER",
-            entity_id=str(user.id),
-            details={
-                "email": user.email,
-                "phone_number": user.phone_number,
-                "role": user.role,
-                "is_first_user": user_count == 0,
-            },
-        )
-        db.add(audit)
-        await db.flush()
-
-        token_data = {
-            "sub": str(user.id),
-            "email": user.email or "",
-            "phone_number": user.phone_number or "",
-            "role": user.role,
-        }
-        access_token = create_access_token(token_data)
-
-        return TokenResponse(
-            access_token=access_token,
-            token_type="bearer",
-            expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-            user=UserResponse.model_validate(user),
+        return await self.register_with_otp(
+            db=db,
+            request=RegisterVerifyOTPRequest(
+                full_name=request.full_name,
+                phone_number=clean_phone or clean_email or "",
+                email=clean_email,
+                password=request.password,
+                code=request.code,
+            ),
         )
 
     async def login_with_password(
@@ -282,20 +216,53 @@ class AuthService:
                 status_code=404,
             )
 
+        now = datetime.now(UTC)
+
+        # Check account lockout against brute-force
+        if user.lockout_until and user.lockout_until > now:
+            remaining_mins = max(1, int((user.lockout_until - now).total_seconds() // 60) + 1)
+            raise AccountLockedException(
+                f"حساب کاربری به دلیل تلاش‌های ناموفق مکرر موقتاً مسدود است. لطفاً پس از {remaining_mins} دقیقه مجدداً تلاش فرمایید.",
+                details={"locked_until": user.lockout_until.isoformat(), "retry_after_minutes": remaining_mins},
+            )
+
         if not user.hashed_password:
             raise AuthenticationException(
                 "این حساب فاقد رمز عبور ثابت است. لطفاً از طریق ورود با کد یکبار مصرف (OTP) وارد شوید."
             )
 
         if not verify_password(request.password, user.hashed_password):
-            raise AuthenticationException("رمز عبور وارد شده نادرست است.")
+            user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
+            if user.failed_login_attempts >= settings.MAX_FAILED_ACCESS_ATTEMPTS:
+                from datetime import timedelta
+                user.lockout_until = now + timedelta(minutes=settings.LOCKOUT_DURATION_MINUTES)
+                audit = AuditEntryModel(
+                    action="USER_ACCOUNT_LOCKED",
+                    entity_type="USER",
+                    entity_id=str(user.id),
+                    details={"identifier": clean_id, "failed_attempts": user.failed_login_attempts},
+                )
+                db.add(audit)
+                await db.commit()
+                raise AccountLockedException(
+                    f"رمز عبور وارد شده نادرست است. حساب کاربری شما به دلیل ۵ بار تلاش ناموفق، به مدت {settings.LOCKOUT_DURATION_MINUTES} دقیقه قفل شد."
+                )
+
+            await db.commit()
+            remaining_attempts = settings.MAX_FAILED_ACCESS_ATTEMPTS - user.failed_login_attempts
+            raise AuthenticationException(
+                f"رمز عبور وارد شده نادرست است. {remaining_attempts} تلاش دیگر تا قفل شدن حساب باقی مانده است."
+            )
 
         if not user.is_active:
             raise AuthenticationException(
                 "حساب کاربری شما غیرفعال شده است. لطفاً با مدیر سیستم تماس بگیرید."
             )
 
-        user.last_login_at = datetime.now(UTC)
+        # Reset failed attempts on success
+        user.failed_login_attempts = 0
+        user.lockout_until = None
+        user.last_login_at = now
         await db.flush()
 
         audit = AuditEntryModel(
@@ -368,7 +335,6 @@ class AuthService:
             channel=str(data["channel"]),
             expires_in=int(data["expires_in"] or 180),
             cooldown_seconds=int(data["cooldown_seconds"] or 120),
-            debug_code=str(data["debug_code"]) if data.get("debug_code") else None,
             message="کد یکبار مصرف با موفقیت ارسال شد.",
         )
 
@@ -404,6 +370,8 @@ class AuthService:
             raise AuthenticationException("حساب کاربری شما غیرفعال شده است. لطفاً با مدیر سیستم تماس بگیرید.")
 
         now = datetime.now(UTC)
+        user.failed_login_attempts = 0
+        user.lockout_until = None
         user.last_login_at = now
         audit = AuditEntryModel(
             action="USER_LOGIN_OTP",

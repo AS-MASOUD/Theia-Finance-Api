@@ -6,8 +6,7 @@ from src.app.database.models import SystemRole
 from src.modules.auth.application.dtos import UserResponse
 
 EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
-# Password must be at least 8 characters, include English letters, numbers and symbols
-PASSWORD_REGEX = re.compile(r"^(?=.*[A-Za-z])(?=.*\d)(?=.*[^a-zA-Z0-9\s]).{8,128}$")
+PASSWORD_REGEX = re.compile(r"^(?=.*[a-z])(?=.*\d)(?=.*[^a-zA-Z0-9\s]).{8,128}$")
 
 class UserCreateRequest(BaseModel):
     email: str = Field(..., description="User email address")

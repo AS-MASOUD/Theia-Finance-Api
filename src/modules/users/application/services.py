@@ -194,13 +194,25 @@ class UserService:
     ) -> UserModel:
         user = await self.get_user_by_id(db, user_id)
 
-        # Safeguard: Do not demote the last active sysmanager
+        # Safeguard: Do not demote the last active sysmanager or last active administrator
         if user.role == SystemRole.SYSMANAGER.value and new_role != SystemRole.SYSMANAGER:
             sysmanager_count = await self._count_active_sysmanagers(db)
             if sysmanager_count <= 1:
                 raise AppException(
                     message="Cannot demote the last remaining active System Manager.",
                     code="LAST_SYSMANAGER_PROTECTION",
+                    status_code=400,
+                )
+
+        if user.role in (SystemRole.SYSMANAGER.value, SystemRole.ADMIN.value) and new_role not in (
+            SystemRole.SYSMANAGER,
+            SystemRole.ADMIN,
+        ):
+            admin_count = await self._count_active_administrators(db)
+            if admin_count <= 1:
+                raise AppException(
+                    message="Cannot remove administrative privileges from the last remaining active Administrator.",
+                    code="LAST_ADMIN_PROTECTION",
                     status_code=400,
                 )
 
@@ -241,13 +253,21 @@ class UserService:
                 status_code=400,
             )
 
-        # Safeguard: cannot deactivate last active sysmanager
-        if user.role == SystemRole.SYSMANAGER.value and not is_active:
-            sysmanager_count = await self._count_active_sysmanagers(db)
-            if sysmanager_count <= 1:
+        # Safeguard: cannot deactivate last active administrator / sysmanager
+        if not is_active and user.role in (SystemRole.SYSMANAGER.value, SystemRole.ADMIN.value):
+            if user.role == SystemRole.SYSMANAGER.value:
+                sysmanager_count = await self._count_active_sysmanagers(db)
+                if sysmanager_count <= 1:
+                    raise AppException(
+                        message="Cannot deactivate the last remaining active System Manager.",
+                        code="LAST_SYSMANAGER_PROTECTION",
+                        status_code=400,
+                    )
+            admin_count = await self._count_active_administrators(db)
+            if admin_count <= 1:
                 raise AppException(
-                    message="Cannot deactivate the last remaining active System Manager.",
-                    code="LAST_SYSMANAGER_PROTECTION",
+                    message="Cannot deactivate the last remaining active Administrator.",
+                    code="LAST_ADMIN_PROTECTION",
                     status_code=400,
                 )
 
@@ -297,6 +317,17 @@ class UserService:
                         code="LAST_SYSMANAGER_PROTECTION",
                         status_code=400,
                     )
+            if user.role in (SystemRole.SYSMANAGER.value, SystemRole.ADMIN.value) and request.role not in (
+                SystemRole.SYSMANAGER,
+                SystemRole.ADMIN,
+            ):
+                admin_count = await self._count_active_administrators(db)
+                if admin_count <= 1:
+                    raise AppException(
+                        message="Cannot remove administrative privileges from the last remaining active Administrator.",
+                        code="LAST_ADMIN_PROTECTION",
+                        status_code=400,
+                    )
             user.role = request.role.value
 
         if request.is_active is not None:
@@ -306,12 +337,20 @@ class UserService:
                     code="SELF_DEACTIVATION_PROHIBITED",
                     status_code=400,
                 )
-            if user.role == SystemRole.SYSMANAGER.value and not request.is_active:
-                sysmanager_count = await self._count_active_sysmanagers(db)
-                if sysmanager_count <= 1:
+            if not request.is_active and user.role in (SystemRole.SYSMANAGER.value, SystemRole.ADMIN.value):
+                if user.role == SystemRole.SYSMANAGER.value:
+                    sysmanager_count = await self._count_active_sysmanagers(db)
+                    if sysmanager_count <= 1:
+                        raise AppException(
+                            message="Cannot deactivate the last active System Manager.",
+                            code="LAST_SYSMANAGER_PROTECTION",
+                            status_code=400,
+                        )
+                admin_count = await self._count_active_administrators(db)
+                if admin_count <= 1:
                     raise AppException(
-                        message="Cannot deactivate the last active System Manager.",
-                        code="LAST_SYSMANAGER_PROTECTION",
+                        message="Cannot deactivate the last active Administrator.",
+                        code="LAST_ADMIN_PROTECTION",
                         status_code=400,
                     )
             user.is_active = request.is_active
@@ -352,13 +391,21 @@ class UserService:
                 status_code=400,
             )
 
-        # Safeguard: cannot delete last sysmanager
+        # Safeguard: cannot delete last sysmanager or last administrator
         if user.role == SystemRole.SYSMANAGER.value:
             sysmanager_count = await self._count_active_sysmanagers(db)
             if sysmanager_count <= 1:
                 raise AppException(
                     message="Cannot delete the last remaining active System Manager.",
                     code="LAST_SYSMANAGER_PROTECTION",
+                    status_code=400,
+                )
+        if user.role in (SystemRole.SYSMANAGER.value, SystemRole.ADMIN.value):
+            admin_count = await self._count_active_administrators(db)
+            if admin_count <= 1:
+                raise AppException(
+                    message="Cannot delete the last remaining active Administrator.",
+                    code="LAST_ADMIN_PROTECTION",
                     status_code=400,
                 )
 
@@ -385,3 +432,13 @@ class UserService:
         )
         result = await db.execute(stmt)
         return result.scalar() or 0
+
+    async def _count_active_administrators(self, db: AsyncSession) -> int:
+        stmt = (
+            select(func.count(UserModel.id))
+            .where(UserModel.role.in_([SystemRole.SYSMANAGER.value, SystemRole.ADMIN.value]))
+            .where(UserModel.is_active == True)  # noqa: E712
+        )
+        result = await db.execute(stmt)
+        return result.scalar() or 0
+

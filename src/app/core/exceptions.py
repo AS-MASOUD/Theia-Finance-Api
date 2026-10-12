@@ -85,3 +85,33 @@ class PermissionDeniedException(AppException):
             details=details,
         )
 
+
+class InvalidOperationException(AppException):
+    def __init__(
+        self,
+        message: str = "Invalid operation requested.",
+        details: dict[str, Any] | None = None,
+    ):
+        super().__init__(
+            message=message,
+            code="INVALID_OPERATION",
+            status_code=400,
+            details=details,
+        )
+
+
+class AccountLockedException(AppException):
+    def __init__(
+        self,
+        message: str = "حساب کاربری به دلیل تلاش‌های ناموفق مکرر موقتاً قفل شده است.",
+        details: dict[str, Any] | None = None,
+    ):
+        super().__init__(
+            message=message,
+            code="ACCOUNT_LOCKED",
+            status_code=403,
+            details=details,
+        )
+
+
+

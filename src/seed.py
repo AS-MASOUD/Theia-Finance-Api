@@ -1,6 +1,7 @@
 import asyncio
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+import os
 
 from sqlalchemy import delete
 
@@ -49,25 +50,33 @@ async def seed_data():
         await db.commit()
 
         print("Seeding Users & Roles (Email & Phone OTP)...")
-        default_password = hash_password("AdminPassword123!")
+        bootstrap_admin_password = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "AdminPassword123!")
+        bootstrap_admin_email = os.getenv("BOOTSTRAP_ADMIN_EMAIL", "admin@personal-fc.local")
+        bootstrap_sysmanager_email = os.getenv("BOOTSTRAP_SYSMANAGER_EMAIL", "sysmanager@personal-fc.local")
+
+        default_password = hash_password(bootstrap_admin_password)
         users = [
             UserModel(
-                email="sysmanager@personal-fc.local",
+                email=bootstrap_sysmanager_email,
                 phone_number="09121111111",
                 hashed_password=default_password,
                 full_name="مدیر ارشد سامانه (SysManager)",
                 role=SystemRole.SYSMANAGER.value,
                 is_active=True,
                 is_verified=True,
+                failed_login_attempts=0,
+                lockout_until=None,
             ),
             UserModel(
-                email="admin@personal-fc.local",
+                email=bootstrap_admin_email,
                 phone_number="09122222222",
                 hashed_password=default_password,
                 full_name="مدیر مالی ارشد (Financial Admin)",
                 role=SystemRole.ADMIN.value,
                 is_active=True,
                 is_verified=True,
+                failed_login_attempts=0,
+                lockout_until=None,
             ),
             UserModel(
                 email="user@personal-fc.local",

@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
 IRAN_PHONE_REGEX = re.compile(r"^09\d{9}$")
-PASSWORD_REGEX = re.compile(r"^(?=.*[A-Za-z])(?=.*\d)(?=.*[^a-zA-Z0-9\s]).{8,128}$")
+PASSWORD_REGEX = re.compile(r"^(?=.*[a-z])(?=.*\d)(?=.*[^a-zA-Z0-9\s]).{8,128}$")
 
 
 class UserRegisterRequest(BaseModel):
@@ -15,6 +15,7 @@ class UserRegisterRequest(BaseModel):
     email: str | None = Field(default=None, description="User email address")
     phone_number: str | None = Field(default=None, description="Iranian mobile number (e.g. 09123456789)")
     password: str | None = Field(default=None, min_length=8, max_length=128, description="User password")
+    code: str = Field(..., min_length=4, max_length=8, description="Mandatory OTP verification code")
 
     @field_validator("password")
     @classmethod
@@ -22,9 +23,8 @@ class UserRegisterRequest(BaseModel):
         if v is None:
             return None
         if not PASSWORD_REGEX.match(v):
-            raise ValueError("Password must be at least 8 characters and include letters, numbers, and symbols.")
+            raise ValueError("Password must be at least 8 characters and include lowercase letters, numbers, and symbols.")
         return v
-    code: str | None = Field(default=None, min_length=4, max_length=8, description="Optional OTP code")
 
     @field_validator("full_name")
     @classmethod
@@ -296,10 +296,17 @@ class OTPResponse(BaseModel):
     channel: str
     expires_in: int
     cooldown_seconds: int
-    debug_code: str | None = None
     message: str = "کد یکبار مصرف با موفقیت ارسال شد."
 
 
 class ChangePasswordRequest(BaseModel):
     old_password: str = Field(..., min_length=1)
-    new_password: str = Field(..., min_length=6, max_length=128)
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password(cls, v: str) -> str:
+        if not PASSWORD_REGEX.match(v):
+            raise ValueError("New password must be at least 8 characters and include lowercase letters, numbers, and symbols.")
+        return v
+

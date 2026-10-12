@@ -70,20 +70,38 @@ async def test_auth_invalid_credentials():
 @pytest.mark.asyncio
 async def test_auth_register_and_change_password():
     import uuid
+    from src.modules.communications.infrastructure.sms.factory import get_sms_provider
 
     unique_email = f"new.member.{uuid.uuid4().hex[:8]}@personal-fc.local"
+    unique_phone = f"0912{uuid.uuid4().int % 10000000:07d}"
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        # Register new user
+        # Request registration OTP
+        otp_req = await client.post(
+            "/api/v1/auth/register/otp/request",
+            json={
+                "email": unique_email,
+                "phone_number": unique_phone,
+                "password": "SecurePassword123!",
+                "full_name": "New Team Member",
+            },
+        )
+        assert otp_req.status_code == 200
+        otp_code = get_sms_provider().sent_messages[-1]["code"]
+
+        # Register new user with mandatory OTP code
         reg_payload = {
             "email": unique_email,
+            "phone_number": unique_phone,
             "password": "SecurePassword123!",
             "full_name": "New Team Member",
+            "code": otp_code,
         }
         res = await client.post("/api/v1/auth/register", json=reg_payload)
         assert res.status_code == 201
         data = res.json()
         assert data["user"]["email"] == unique_email
         assert data["user"]["role"] == "user"  # Because seed users already exist
+        assert data["user"]["is_verified"] is True
         token = data["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
 
@@ -131,11 +149,25 @@ async def test_auth_register_and_change_password():
 @pytest.mark.asyncio
 async def test_onboarding_and_zero_baseline():
     import uuid
+    from src.modules.communications.infrastructure.sms.factory import get_sms_provider
 
     unique_email = f"zero.test.{uuid.uuid4().hex[:8]}@personal-fc.local"
     unique_phone = f"0912{uuid.uuid4().int % 10000000:07d}"
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        # 1. Register new regular user
+        # Request registration OTP
+        reg_otp_res = await client.post(
+            "/api/v1/auth/register/otp/request",
+            json={
+                "email": unique_email,
+                "password": "SecurePassword123!",
+                "full_name": "Zero Baseline User",
+                "phone_number": unique_phone,
+            },
+        )
+        assert reg_otp_res.status_code == 200
+        reg_code = get_sms_provider().sent_messages[-1]["code"]
+
+        # 1. Register new regular user with verified code
         reg_res = await client.post(
             "/api/v1/auth/register",
             json={
@@ -143,6 +175,7 @@ async def test_onboarding_and_zero_baseline():
                 "password": "SecurePassword123!",
                 "full_name": "Zero Baseline User",
                 "phone_number": unique_phone,
+                "code": reg_code,
             },
         )
         assert reg_res.status_code == 201
@@ -299,14 +332,27 @@ async def test_auth_phone_and_name_validation():
         )
         assert res4.status_code == 422
 
-        # 5. Valid phone and name registers successfully
+        # 5. Valid phone and name registers successfully with valid OTP code
+        from src.modules.communications.infrastructure.sms.factory import get_sms_provider
         unique_phone = f"0912{uuid.uuid4().int % 10000000:07d}"
+        otp_req = await client.post(
+            "/api/v1/auth/register/otp/request",
+            json={
+                "phone_number": unique_phone,
+                "password": "Password123!",
+                "full_name": "کاربر تستی معتبر",
+            },
+        )
+        assert otp_req.status_code == 200
+        sms_code = get_sms_provider().sent_messages[-1]["code"]
+
         res5 = await client.post(
             "/api/v1/auth/register",
             json={
                 "phone_number": unique_phone,
                 "password": "Password123!",
                 "full_name": "کاربر تستی معتبر",
+                "code": sms_code,
             },
         )
         assert res5.status_code == 201
@@ -318,6 +364,7 @@ async def test_auth_phone_and_name_validation():
 @pytest.mark.asyncio
 async def test_auth_register_otp_flow():
     import uuid
+    from src.modules.communications.infrastructure.sms.factory import get_sms_provider
 
     unique_phone = f"0935{uuid.uuid4().int % 10000000:07d}"
     reg_data = {
@@ -333,8 +380,8 @@ async def test_auth_register_otp_flow():
         otp_json = otp_res.json()
         assert otp_json["identifier"] == unique_phone
         assert otp_json["channel"] == "sms"
-        assert otp_json["debug_code"] is not None
-        debug_code = otp_json["debug_code"]
+        assert otp_json.get("debug_code") is None
+        valid_code = get_sms_provider().sent_messages[-1]["code"]
 
         # 2. Try verifying with wrong code
         fail_res = await client.post(
@@ -346,7 +393,7 @@ async def test_auth_register_otp_flow():
         # 3. Verify with correct code -> account created and JWT returned
         success_res = await client.post(
             "/api/v1/auth/register/otp/verify",
-            json={**reg_data, "code": debug_code},
+            json={**reg_data, "code": valid_code},
         )
         assert success_res.status_code == 201
         res_json = success_res.json()
@@ -358,6 +405,61 @@ async def test_auth_register_otp_flow():
         # 4. Requesting OTP again for now-existing user returns 409 Conflict
         dup_otp_res = await client.post("/api/v1/auth/register/otp/request", json=reg_data)
         assert dup_otp_res.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_account_lockout_after_five_failed_attempts():
+    import uuid
+    from src.modules.communications.infrastructure.sms.factory import get_sms_provider
+
+    unique_phone = f"0918{uuid.uuid4().int % 10000000:07d}"
+    password = "CorrectPassword123!"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        # Register user with OTP
+        await client.post(
+            "/api/v1/auth/register/otp/request",
+            json={
+                "phone_number": unique_phone,
+                "password": password,
+                "full_name": "تست قفل حساب",
+            },
+        )
+        code = get_sms_provider().sent_messages[-1]["code"]
+        reg_res = await client.post(
+            "/api/v1/auth/register",
+            json={
+                "phone_number": unique_phone,
+                "password": password,
+                "full_name": "تست قفل حساب",
+                "code": code,
+            },
+        )
+        assert reg_res.status_code == 201
+
+        # 4 failed login attempts with wrong password -> 401
+        for i in range(4):
+            fail_login = await client.post(
+                "/api/v1/auth/login",
+                json={"identifier": unique_phone, "password": f"WrongPass{i}!"},
+            )
+            assert fail_login.status_code == 401
+
+        # 5th failed attempt triggers lockout -> 403 Forbidden
+        fifth_attempt = await client.post(
+            "/api/v1/auth/login",
+            json={"identifier": unique_phone, "password": "WrongPassword5!"},
+        )
+        assert fifth_attempt.status_code == 403
+        assert "قفل" in fifth_attempt.json()["message"]
+
+        # Subsequent attempt even with correct password is still locked out
+        locked_correct = await client.post(
+            "/api/v1/auth/login",
+            json={"identifier": unique_phone, "password": password},
+        )
+        assert locked_correct.status_code == 403
+
 
 
 

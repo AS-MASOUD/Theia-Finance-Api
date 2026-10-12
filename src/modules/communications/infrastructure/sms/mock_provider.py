@@ -23,13 +23,10 @@ class MockSMSProvider(BaseSMSProvider):
         self, phone_number: str, code: str, template: str | None = None
     ) -> bool:
         logger.info(
-            "==================================================",
-            phone=phone_number,
-            otp_code=code,
-            template=template or "default_otp",
+            "🔑 [MOCK OTP DISPATCHED] Phone: %s | Code: [REDACTED] | Template: %s",
+            phone_number,
+            template or "default",
         )
-        logger.info(f"🔑 [MOCK OTP CODE DISPATCHED] Phone: {phone_number} | Code: {code}")
-        logger.info("==================================================")
         self.sent_messages.append(
             {"phone": phone_number, "code": code, "template": template or "default", "type": "otp"}
         )

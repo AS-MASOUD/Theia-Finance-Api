@@ -75,7 +75,9 @@ def create_application() -> FastAPI:
                     "code": exc.code,
                     "message": exc.message,
                     "details": exc.details,
-                }
+                },
+                "message": exc.message,
+                "code": exc.code,
             },
         )
 

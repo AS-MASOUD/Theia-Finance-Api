@@ -11,6 +11,7 @@ from src.modules.liabilities.presentation.router import liabilities_router
 from src.modules.notifications.presentation.router import notifications_router
 from src.modules.scenarios.presentation.router import scenarios_router
 from src.modules.transactions.presentation.router import transactions_router
+from src.modules.uploads.presentation.router import uploads_router
 from src.modules.users.presentation.router import users_router
 
 api_v1_router = APIRouter()
@@ -27,4 +28,6 @@ api_v1_router.include_router(goals_router)
 api_v1_router.include_router(analytics_router)
 api_v1_router.include_router(scenarios_router)
 api_v1_router.include_router(ai_router)
+api_v1_router.include_router(uploads_router)
+
 

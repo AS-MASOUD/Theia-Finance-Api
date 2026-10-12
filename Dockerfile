@@ -17,8 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install --upgrade pip uv
 
 COPY pyproject.toml .
-# Compile dependencies to wheelhouse
-RUN uv pip install --system --target /build/deps .
+# Install dependencies into target directory
+RUN uv pip install --system --target /build/deps -r pyproject.toml
 
 # Final stage
 FROM python:3.12-slim AS runner

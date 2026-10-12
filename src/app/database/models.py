@@ -389,7 +389,9 @@ class UserModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         String(50), nullable=False, default=SystemRole.USER.value, index=True
     )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    is_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    failed_login_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    lockout_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     age: Mapped[int | None] = mapped_column(Integer, nullable=True)
     job: Mapped[str | None] = mapped_column(String(100), nullable=True)
     bio: Mapped[str | None] = mapped_column(Text, nullable=True)

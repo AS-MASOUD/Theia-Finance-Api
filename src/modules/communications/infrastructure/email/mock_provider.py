@@ -9,12 +9,6 @@ class MockEmailProvider(BaseEmailProvider):
         self.sent_emails: list[dict[str, str]] = []
 
     async def send_email(self, to_email: str, subject: str, html_body: str) -> bool:
-        logger.info(
-            "==================================================",
-            to=to_email,
-            subject=subject,
-        )
-        logger.info(f"📧 [MOCK EMAIL DISPATCHED] To: {to_email} | Subject: {subject}")
-        logger.info("==================================================")
+        logger.info("📧 [MOCK EMAIL DISPATCHED] To: %s | Subject: %s", to_email, subject)
         self.sent_emails.append({"to": to_email, "subject": subject, "body": html_body})
         return True

@@ -111,14 +111,13 @@ class OTPService:
         db.add(otp_record)
         await db.flush()
 
-        logger.info("[OTP-SERVICE] Generated code for %s [%s]: %s (expires in %ds)", clean_id, channel, code_str, settings.OTP_EXPIRE_SECONDS)
-        print(f"\n=======================================================\n[OTP-SERVICE] >>> Identifier: {clean_id} | OTP Code: {code_str} <<<\n=======================================================\n", flush=True)
+        logger.info("[OTP-SERVICE] Generated OTP code for %s [%s] (expires in %ds, code redacted)", clean_id, channel, settings.OTP_EXPIRE_SECONDS)
 
         # Dispatch via SMS or Email
         if channel == "sms":
             await self.sms_provider.send_otp_pattern(clean_id, code_str)
         else:
-            subject = f"کد تایید سامانه فرماندهی مالی: {code_str}"
+            subject = "کد تایید سامانه فرماندهی مالی"
             html_body = f"""
             <div dir="rtl" style="font-family: Tahoma, sans-serif; padding: 20px; color: #1e293b;">
                 <h2 style="color: #4f46e5;">سامانه مدیریت مالی و سرمایه‌گذاری شخصی</h2>
@@ -136,7 +135,6 @@ class OTPService:
             "channel": channel,
             "expires_in": settings.OTP_EXPIRE_SECONDS,
             "cooldown_seconds": settings.OTP_COOLDOWN_SECONDS,
-            "debug_code": code_str if settings.DEBUG else None,
         }
 
     async def verify_otp(

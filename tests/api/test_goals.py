@@ -7,8 +7,20 @@ from src.main import app
 async def test_goals_crud_and_onboarding_compatibility():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         # 1. Register a user
+        from src.modules.communications.infrastructure.sms.factory import get_sms_provider
+
         email = f"goal_user_{uuid.uuid4().hex[:8]}@personal-fc.local"
         phone = f"0912{uuid.uuid4().int % 10000000:07d}"
+        await client.post(
+            "/api/v1/auth/register/otp/request",
+            json={
+                "email": email,
+                "password": "SecurePassword123!",
+                "full_name": "Goal User",
+                "phone_number": phone,
+            },
+        )
+        code = get_sms_provider().sent_messages[-1]["code"]
         reg = await client.post(
             "/api/v1/auth/register",
             json={
@@ -16,6 +28,7 @@ async def test_goals_crud_and_onboarding_compatibility():
                 "password": "SecurePassword123!",
                 "full_name": "Goal User",
                 "phone_number": phone,
+                "code": code,
             },
         )
         assert reg.status_code == 201

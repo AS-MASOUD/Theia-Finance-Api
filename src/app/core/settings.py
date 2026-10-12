@@ -1,6 +1,9 @@
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from src.app.core.exceptions import InvalidOperationException
 
 
 class Settings(BaseSettings):
@@ -31,8 +34,8 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
     # Market Data & AI
-    MARKET_DATA_PROVIDER: str = "brs"  # brs, mock
-    BRS_API_KEY: str = "BM42nXyL78h5NrpdMrEPaXDGLCYfgJMQ"
+    MARKET_DATA_PROVIDER: str = "mock"  # brs, mock
+    BRS_API_KEY: str = ""
     BRS_COMMODITY_URL: str = "https://api.brsapi.ir/Market/Commodity.php"
     BRS_CRYPTO_URL: str = "https://api.brsapi.ir/Market/Cryptocurrency.php"
     BRS_GOLD_CURRENCY_URL: str = "https://api.brsapi.ir/Market/Gold_Currency.php"
@@ -44,6 +47,12 @@ class Settings(BaseSettings):
 
     # Base financial defaults
     DEFAULT_BASE_CURRENCY: str = "TOMAN"
+
+    # Identity, Password & Brute-Force Lockout Policies
+    MAX_FAILED_ACCESS_ATTEMPTS: int = 5
+    LOCKOUT_DURATION_MINUTES: int = 15
+    ALLOWED_LOCKOUT_FOR_NEW_USERS: bool = True
+    MIN_PASSWORD_LENGTH: int = 8
 
     # Communications & OTP (Supports Iranian SMS & Email Providers)
     SMS_PROVIDER: str = "mock"  # mock, kavenegar, farazsms
@@ -68,7 +77,31 @@ class Settings(BaseSettings):
     # Asset Volatility Alert Threshold (%)
     ASSET_ALERT_THRESHOLD_PERCENT: float = 4.0
 
+    @model_validator(mode="after")
+    def validate_production_security(self) -> "Settings":
+        """Fail fast in production if production secrets or connection strings are missing or default."""
+        if self.ENVIRONMENT.lower() == "production":
+            insecure_secret_defaults = (
+                "development-secret-key-at-least-32-chars-long",
+                "insecure-default-change-in-production-env",
+                "change-this-in-production-to-a-secure-random-string",
+                "development-only-secret-key-must-be-changed-in-production-32-chars-min",
+            )
+            if not self.SECRET_KEY or self.SECRET_KEY in insecure_secret_defaults or len(self.SECRET_KEY) < 32:
+                raise InvalidOperationException(
+                    "Production configuration error: SECRET_KEY must be set to a secure, "
+                    "cryptographically random string with at least 32 characters in production."
+                )
+
+            if not self.DATABASE_URL or "admin:admin" in self.DATABASE_URL or "postgres:postgres" in self.DATABASE_URL:
+                raise InvalidOperationException(
+                    "Production configuration error: Default database credentials (admin:admin or postgres:postgres) "
+                    "are prohibited in production. A secure DATABASE_URL must be configured."
+                )
+        return self
+
 
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+

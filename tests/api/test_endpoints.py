@@ -8,8 +8,20 @@ from src.main import app
 
 
 async def get_auth_headers(client: AsyncClient) -> dict[str, str]:
+    from src.modules.communications.infrastructure.sms.factory import get_sms_provider
+
     email = f"endpoint_user_{uuid.uuid4().hex[:8]}@personal-fc.local"
     phone = f"0912{uuid.uuid4().int % 10000000:07d}"
+    await client.post(
+        "/api/v1/auth/register/otp/request",
+        json={
+            "email": email,
+            "password": "SecurePassword123!",
+            "full_name": "Endpoint Tester",
+            "phone_number": phone,
+        },
+    )
+    code = get_sms_provider().sent_messages[-1]["code"]
     reg = await client.post(
         "/api/v1/auth/register",
         json={
@@ -17,6 +29,7 @@ async def get_auth_headers(client: AsyncClient) -> dict[str, str]:
             "password": "SecurePassword123!",
             "full_name": "Endpoint Tester",
             "phone_number": phone,
+            "code": code,
         },
     )
     token = reg.json()["access_token"]

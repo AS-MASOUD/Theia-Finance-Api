@@ -1,6 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, status
+from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.database.models import UserModel
 from src.app.database.session import get_db_session
 from src.modules.ai.application.dtos import (

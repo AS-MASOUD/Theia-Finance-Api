@@ -36,6 +36,9 @@ async def test_password_login_with_phone_number_and_email():
 @pytest.mark.asyncio
 async def test_otp_flow_phone_and_email():
     import uuid
+    from src.modules.communications.infrastructure.sms.factory import get_sms_provider
+
+    sms_provider = get_sms_provider()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         # 1. Request OTP for existing phone number
@@ -47,8 +50,12 @@ async def test_otp_flow_phone_and_email():
         otp_info = req_res.json()
         assert otp_info["channel"] == "sms"
         assert otp_info["identifier"] == "09122222222"
-        debug_code = otp_info.get("debug_code")
-        assert debug_code is not None
+        # Verify debug_code is never exposed in response
+        assert otp_info.get("debug_code") is None
+
+        # Dispatched code from provider mock
+        dispatched_code = sms_provider.sent_messages[-1]["code"]
+        assert dispatched_code is not None
 
         # 2. Cooldown check - immediate repeat should return 429
         repeat_res = await client.post(
@@ -67,7 +74,7 @@ async def test_otp_flow_phone_and_email():
         # 4. Correct OTP code logs in successfully
         correct_verify = await client.post(
             "/api/v1/auth/otp/verify",
-            json={"identifier": "09122222222", "code": debug_code},
+            json={"identifier": "09122222222", "code": dispatched_code},
         )
         assert correct_verify.status_code == 200
         verified_data = correct_verify.json()
@@ -83,34 +90,49 @@ async def test_otp_flow_phone_and_email():
         assert new_req.status_code == 404
         assert new_req.json()["error"]["code"] == "USER_NOT_FOUND"
 
-        # 6. Register the user with phone number and password
-        reg_res = await client.post(
-            "/api/v1/auth/register",
+        # 6. Request registration OTP for new user
+        reg_otp_req = await client.post(
+            "/api/v1/auth/register/otp/request",
             json={
                 "phone_number": new_phone,
                 "password": "ValidPassword123!",
                 "full_name": "کاربر جدید تلفنی",
             },
         )
+        assert reg_otp_req.status_code == 200
+        new_reg_code = sms_provider.sent_messages[-1]["code"]
+
+        # 7. Register the user with phone number, password, and mandatory OTP code
+        reg_res = await client.post(
+            "/api/v1/auth/register",
+            json={
+                "phone_number": new_phone,
+                "password": "ValidPassword123!",
+                "full_name": "کاربر جدید تلفنی",
+                "code": new_reg_code,
+            },
+        )
         assert reg_res.status_code == 201
         assert reg_res.json()["user"]["phone_number"] == new_phone
+        assert reg_res.json()["user"]["is_verified"] is True
 
-        # 7. Now OTP request succeeds for the registered user
+        # 8. Now OTP login request succeeds for the registered user
         otp_req_reg = await client.post(
             "/api/v1/auth/otp/request",
             json={"identifier": new_phone},
         )
         assert otp_req_reg.status_code == 200
-        new_code = otp_req_reg.json()["debug_code"]
+        new_login_code = sms_provider.sent_messages[-1]["code"]
 
         new_verify = await client.post(
             "/api/v1/auth/otp/verify",
-            json={"identifier": new_phone, "code": new_code},
+            json={"identifier": new_phone, "code": new_login_code},
         )
         assert new_verify.status_code == 200
         new_user_data = new_verify.json()
         assert new_user_data["user"]["phone_number"] == new_phone
         assert new_user_data["user"]["role"] == "user"
+
 
 
 @pytest.mark.asyncio
