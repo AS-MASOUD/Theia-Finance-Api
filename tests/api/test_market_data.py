@@ -86,3 +86,16 @@ async def test_market_rates_and_sync():
         second_sync = await client.post("/api/v1/assets/market/sync", headers=headers)
         assert second_sync.status_code == 200
         assert "شکیبا" in second_sync.json()["message"] or "تلاش" in second_sync.json()["message"]
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_public_market_rates():
+    """Verify that guests/unauthenticated visitors can retrieve public market rates without credentials."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        res = await client.get("/api/v1/assets/market/rates")
+        assert res.status_code == 200
+        data = res.json()
+        assert "gold_and_coins" in data
+        assert "commodities" in data
+        assert "currencies" in data
+        assert "cryptocurrency" in data

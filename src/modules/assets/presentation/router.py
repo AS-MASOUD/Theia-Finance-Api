@@ -19,7 +19,7 @@ from src.modules.assets.application.dtos import (
 from src.modules.assets.application.market_sync_service import MarketSyncService
 from src.modules.assets.application.services import AssetService
 from src.modules.assets.infrastructure.scheduler import market_scheduler
-from src.modules.auth.presentation.dependencies import get_current_user
+from src.modules.auth.presentation.dependencies import get_current_user, get_optional_current_user
 
 assets_router = APIRouter(prefix="/assets", tags=["Assets"])
 market_sync_service = MarketSyncService()
@@ -32,11 +32,12 @@ def get_asset_service(db: AsyncSession = Depends(get_db_session)) -> AssetServic
 @assets_router.get("/market/rates", response_model=MarketRatesResponse)
 async def get_market_rates(
     db: AsyncSession = Depends(get_db_session),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel | None = Depends(get_optional_current_user),
 ) -> MarketRatesResponse:
     """Retrieve the latest synchronized market rates for commodities, gold, currency, and crypto.
 
     Served from fast cache updated periodically ~5 times a day by background task.
+    Accessible to both authenticated users and public guests.
     """
     return await market_sync_service.get_market_rates(db=db)
 
