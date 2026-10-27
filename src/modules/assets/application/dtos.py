@@ -82,6 +82,7 @@ class MarketRatesResponse(BaseModel):
     commodities: list[MarketQuoteDTO]
     currencies: list[MarketQuoteDTO]
     cryptocurrency: list[MarketQuoteDTO]
+    stocks: list[MarketQuoteDTO] = Field(default_factory=list)
     usd_toman_rate: Decimal | None = None
     last_sync_time: datetime | None = None
     sync_source: str = "BRS API"
@@ -92,7 +93,7 @@ class MarketSyncResultResponse(BaseModel):
     message: str
     updated_assets_count: int
     total_quotes_fetched: int
-    last_sync_time: datetime
+    last_sync_time: datetime | None = None
 
 
 class AssetClassResponse(BaseModel):

@@ -46,7 +46,16 @@ async def get_market_rates(
 async def trigger_market_sync(
     current_user: UserModel = Depends(get_current_user),
 ) -> MarketSyncResultResponse:
-    """Manually trigger background synchronization of commodity, gold, forex, and crypto rates."""
+    """Manual market rate sync is restricted. Background scheduler updates automatically 5 times a day."""
+    if not getattr(current_user, "is_superuser", False) and getattr(current_user, "role", "") not in ("admin", "sysmanager"):
+        cached = await market_sync_service.get_market_rates()
+        return MarketSyncResultResponse(
+            success=False,
+            message="بروزرسانی دستی توسط کاربر مجاز نمی‌باشد. نرخ‌ها به صورت خودکار ۵ بار در شبانه‌روز همگام‌سازی می‌شوند.",
+            updated_assets_count=0,
+            total_quotes_fetched=len(cached.gold_and_coins) + len(cached.commodities) + len(cached.currencies) + len(cached.cryptocurrency),
+            last_sync_time=cached.last_sync_time,
+        )
     return await market_scheduler.trigger_manual_sync()
 
 @assets_router.get("/classes", response_model=list[AssetClassResponse])

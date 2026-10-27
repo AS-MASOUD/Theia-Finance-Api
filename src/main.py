@@ -87,14 +87,30 @@ def create_application() -> FastAPI:
     ) -> JSONResponse:
         errors = jsonable_encoder(exc.errors())
         logger.warning("Request validation failed", errors=errors)
+
+        # Pick the most specific human-readable Persian message from validation errors
+        error_msg = "اطلاعات ارسالی نامعتبر است. لطفاً ورودی‌ها را بررسی نمایید."
+        if errors and isinstance(errors, list) and len(errors) > 0:
+            first_err = errors[0]
+            raw = str(first_err.get("msg", ""))
+            if "Value error, " in raw:
+                raw = raw.replace("Value error, ", "").strip()
+            loc_str = ".".join(str(x) for x in first_err.get("loc", [])).lower()
+            if "password" in loc_str or "password" in raw.lower():
+                error_msg = "رمز عبور باید حداقل ۸ کاراکتر و شامل حروف کوچک انگلیسی (a-z)، عدد و نماد یا علامت ویژه (مانند !@#$) باشد."
+            elif raw:
+                error_msg = raw
+
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             content={
                 "error": {
                     "code": "VALIDATION_ERROR",
-                    "message": "The submitted payload is invalid.",
+                    "message": error_msg,
                     "details": errors,
-                }
+                },
+                "message": error_msg,
+                "code": "VALIDATION_ERROR",
             },
         )
 

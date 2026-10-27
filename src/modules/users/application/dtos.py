@@ -28,14 +28,14 @@ class UserCreateRequest(BaseModel):
     def validate_email(cls, v: str) -> str:
         clean = v.strip().lower()
         if not EMAIL_REGEX.match(clean):
-            raise ValueError("Invalid email format")
+            raise ValueError("قالب آدرس ایمیل نامعتبر است.")
         return clean
 
     @field_validator("password")
     @classmethod
     def validate_password(cls, v: str) -> str:
         if not PASSWORD_REGEX.match(v):
-            raise ValueError("Password must be at least 8 characters and include letters, numbers, and symbols.")
+            raise ValueError("رمز عبور باید حداقل ۸ کاراکتر و شامل حروف کوچک انگلیسی (a-z)، عدد و نماد یا علامت ویژه (مانند !@#$) باشد.")
         return v
 
 class UserUpdateRoleRequest(BaseModel):
@@ -68,7 +68,7 @@ class UserUpdateRequest(BaseModel):
             return None
         clean = v.strip().lower()
         if not EMAIL_REGEX.match(clean):
-            raise ValueError("Invalid email format")
+            raise ValueError("قالب آدرس ایمیل نامعتبر است.")
         return clean
 
     @field_validator("password")
@@ -77,7 +77,7 @@ class UserUpdateRequest(BaseModel):
         if v is None:
             return None
         if not PASSWORD_REGEX.match(v):
-            raise ValueError("Password must be at least 8 characters and include letters, numbers, and symbols.")
+            raise ValueError("رمز عبور باید حداقل ۸ کاراکتر و شامل حروف کوچک انگلیسی (a-z)، عدد و نماد یا علامت ویژه (مانند !@#$) باشد.")
         return v
 
 class RoleDefinitionResponse(BaseModel):

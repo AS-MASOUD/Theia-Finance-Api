@@ -23,7 +23,7 @@ class UserRegisterRequest(BaseModel):
         if v is None:
             return None
         if not PASSWORD_REGEX.match(v):
-            raise ValueError("Password must be at least 8 characters and include lowercase letters, numbers, and symbols.")
+            raise ValueError("رمز عبور باید حداقل ۸ کاراکتر و شامل حروف کوچک انگلیسی (a-z)، عدد و نماد یا علامت ویژه (مانند !@#$) باشد.")
         return v
 
     @field_validator("full_name")
@@ -70,7 +70,7 @@ class RegisterRequestOTP(BaseModel):
         if v is None:
             return None
         if not PASSWORD_REGEX.match(v):
-            raise ValueError("Password must be at least 8 characters and include letters, numbers, and symbols.")
+            raise ValueError("رمز عبور باید حداقل ۸ کاراکتر و شامل حروف کوچک انگلیسی (a-z)، عدد و نماد یا علامت ویژه (مانند !@#$) باشد.")
         return v
 
     @field_validator("full_name")
@@ -108,6 +108,15 @@ class RegisterVerifyOTPRequest(BaseModel):
     email: str | None = Field(default=None, description="User email address")
     password: str | None = Field(default=None, min_length=8, max_length=128, description="User password")
     code: str = Field(..., min_length=4, max_length=8, description="OTP code received")
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if not PASSWORD_REGEX.match(v):
+            raise ValueError("رمز عبور باید حداقل ۸ کاراکتر و شامل حروف کوچک انگلیسی (a-z)، عدد و نماد یا علامت ویژه (مانند !@#$) باشد.")
+        return v
 
     @field_validator("full_name")
     @classmethod
@@ -312,6 +321,6 @@ class ChangePasswordRequest(BaseModel):
     @classmethod
     def validate_new_password(cls, v: str) -> str:
         if not PASSWORD_REGEX.match(v):
-            raise ValueError("New password must be at least 8 characters and include lowercase letters, numbers, and symbols.")
+            raise ValueError("رمز عبور جدید باید حداقل ۸ کاراکتر و شامل حروف کوچک انگلیسی (a-z)، عدد و نماد یا علامت ویژه (مانند !@#$) باشد.")
         return v
 

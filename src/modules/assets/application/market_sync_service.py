@@ -88,13 +88,14 @@ class MarketSyncService:
             now = datetime.now(UTC)
             logger.info("Starting background market price synchronization from BRS API...")
 
-            # 1. Concurrently fetch all 3 APIs
+            # 1. Concurrently fetch all market APIs
             comm_task = self.client.fetch_commodities()
             gold_curr_task = self.client.fetch_gold_and_currency()
             crypto_task = self.client.fetch_cryptocurrency()
+            stocks_task = self.client.fetch_stocks()
 
-            comm_data, gold_curr_data, crypto_data = await asyncio.gather(
-                comm_task, gold_curr_task, crypto_task, return_exceptions=True
+            comm_data, gold_curr_data, crypto_data, stocks_data = await asyncio.gather(
+                comm_task, gold_curr_task, crypto_task, stocks_task, return_exceptions=True
             )
 
             if isinstance(comm_data, Exception):
@@ -106,6 +107,9 @@ class MarketSyncService:
             if isinstance(crypto_data, Exception):
                 logger.error("Crypto fetch failed: %s", crypto_data)
                 crypto_data = []
+            if isinstance(stocks_data, Exception):
+                logger.error("Stocks fetch failed: %s", stocks_data)
+                stocks_data = []
 
             # 2. Extract USD/TOMAN base exchange rate
             usd_toman_rate: Decimal | None = None
@@ -241,6 +245,8 @@ class MarketSyncService:
                     "usd": (price / usd_toman_rate) if (usd_toman_rate and usd_toman_rate > 0) else Decimal("1"),
                     "toman": price,
                 }
+                # Also store canonical IRR pair symbol
+                price_catalog[f"{sym}_IRR"] = price_catalog[sym]
                 if sym == "USD":
                     price_catalog["DOLLAR"] = price_catalog[sym]
 
@@ -256,6 +262,12 @@ class MarketSyncService:
                     # Determine ticker symbol
                     sym = CRYPTO_TICKER_MAP.get(name_en.lower()) or name_en.upper().replace(" ", "")
 
+                    # Ensure realistic Toman price for stablecoins and cryptos
+                    if sym == "USDT" or name_en.lower() == "tether":
+                        p_toman = (usd_toman_rate + Decimal("250")) if usd_toman_rate else Decimal("95100")
+                    elif (not p_toman or p_toman < Decimal("70000")) and usd_toman_rate and p_usd > Decimal("0"):
+                        p_toman = p_usd * usd_toman_rate
+
                     quote = MarketQuoteDTO(
                         symbol=sym,
                         name=name,
@@ -269,6 +281,38 @@ class MarketSyncService:
                     )
                     cryptos.append(quote)
                     price_catalog[sym] = {"usd": p_usd, "toman": p_toman}
+                    price_catalog[f"{sym}_USD"] = {"usd": p_usd, "toman": p_toman}
+                    if sym == "USDT":
+                        price_catalog["USDT_IRT"] = {"usd": p_usd, "toman": p_toman}
+                        price_catalog["TETHER"] = {"usd": p_usd, "toman": p_toman}
+
+            # Process Equities and Indices
+            stocks_list: list[MarketQuoteDTO] = []
+            if isinstance(stocks_data, list):
+                for item in stocks_data:
+                    sym = str(item.get("symbol", "")).strip().upper()
+                    name = str(item.get("name", "")).strip()
+                    name_en = item.get("name_en")
+                    price = _safe_decimal(item.get("price"))
+                    unit = str(item.get("unit", "ریال")).strip()
+                    chg = float(item.get("change_percent", 0.0) or 0.0)
+                    p_toman = (price / Decimal("10")) if unit == "ریال" else price
+
+                    quote = MarketQuoteDTO(
+                        symbol=sym,
+                        name=name,
+                        name_en=name_en,
+                        category="stock",
+                        price=price,
+                        unit=unit,
+                        change_percent=chg,
+                        price_toman=p_toman,
+                        updated_at=now,
+                    )
+                    stocks_list.append(quote)
+                    price_catalog[sym] = {"usd": Decimal("0"), "toman": p_toman}
+                    if sym == "TEDPIX":
+                        price_catalog["BOURSE"] = price_catalog[sym]
 
             # Update cache
             rates_resp = MarketRatesResponse(
@@ -276,6 +320,7 @@ class MarketSyncService:
                 commodities=commodities,
                 currencies=currencies,
                 cryptocurrency=cryptos,
+                stocks=stocks_list,
                 usd_toman_rate=usd_toman_rate,
                 last_sync_time=now,
                 sync_source="BRS API",
